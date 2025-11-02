@@ -1,8 +1,7 @@
 #import modules
-import math
 import random
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 import winsound  # for sound effects
 import json
 import os  # for file operations
@@ -30,7 +29,6 @@ except ImportError:
         logging.warning(f"Could not install wmi module: {e}")
         wmi = None
 from pathlib import Path
-from urllib.parse import urlencode
 
 class LayoutManager:
     def __init__(self, root):
