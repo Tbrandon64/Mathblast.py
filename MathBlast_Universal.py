@@ -11,9 +11,93 @@ import random
 import json
 import datetime
 import threading
+import socket
 import platform as sys_platform
 import logging
 import time
+import subprocess
+import sys
+import os
+# -----------------------------------------------------------
+# 🎮 Controller / Gamepad Support (requires pygame)
+# -----------------------------------------------------------
+import threading
+
+try:
+    import pygame
+    pygame.init()
+    pygame.joystick.init()
+    GAMEPAD_AVAILABLE = pygame.joystick.get_count() > 0
+except Exception as e:
+    print(f"[Controller] pygame not available: {e}")
+    GAMEPAD_AVAILABLE = False
+
+controller_state = {"left": False, "right": False, "up": False, "down": False, "a": False, "b": False}
+
+def listen_for_controller():
+    """Run in background thread to monitor controller input."""
+    if not GAMEPAD_AVAILABLE:
+        print("[Controller] No controller detected.")
+        return
+
+    joystick = pygame.joystick.Joystick(0)
+    joystick.init()
+    print(f"[Controller] Connected: {joystick.get_name()}")
+
+    while True:
+        pygame.event.pump()
+
+        # D-Pad (Hat) input
+        hat = joystick.get_hat(0)
+        controller_state["left"] = hat[0] == -1
+        controller_state["right"] = hat[0] == 1
+        controller_state["up"] = hat[1] == 1
+        controller_state["down"] = hat[1] == -1
+
+        # Buttons (A = 0, B = 1 for Xbox layout)
+        controller_state["a"] = joystick.get_button(0)
+        controller_state["b"] = joystick.get_button(1)
+
+        # Example: link to your game’s input actions
+        if controller_state["a"]:
+            print("[Controller] A pressed (Jump/Select)")
+            # call your in-game function, e.g. jump() or start_game()
+        if controller_state["b"]:
+            print("[Controller] B pressed (Back/Cancel)")
+            # call your back/cancel action here
+
+        # Analog stick example (move)
+        axis_x = joystick.get_axis(0)
+        axis_y = joystick.get_axis(1)
+        if abs(axis_x) > 0.2 or abs(axis_y) > 0.2:
+            # Replace with your movement handler
+            # move_player(axis_x, axis_y)
+            pass
+
+        pygame.time.wait(50)  # 20 checks per second to save CPU
+
+# --- Start local server automatically if not running ---
+def start_local_server():
+    try:
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex(('127.0.0.1', 5000))
+        sock.close()
+        if result == 0:
+            print("Server already running.")
+            return
+    except Exception:
+        pass
+
+    server_path = os.path.join(os.path.dirname(sys.executable), "mathblast_server.py")
+    if not os.path.exists(server_path):
+        # When running as .py, look in the source folder
+        server_path = os.path.join(os.path.dirname(__file__), "mathblast_server.py")
+
+    print("Starting local server...")
+    subprocess.Popen([sys.executable, server_path], creationflags=subprocess.CREATE_NO_WINDOW)
+
+start_local_server()
 
 # ------------------- Logging -------------------
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -468,6 +552,14 @@ def sync_cloud_storage():
         except Exception as e:
             logging.error(f"OneDrive sync failed: {e}")
 
+
+def sync_profiles_to_icloud():
+    """Stub for syncing profiles to iCloud. Real implementation is platform-specific."""
+    try:
+        logging.info("sync_profiles_to_icloud: not implemented in this environment")
+    except Exception:
+        pass
+
 # Initialize services based on platform
 if PLATFORM in ['macos', 'ios']:
     init_apple_services()
@@ -476,10 +568,66 @@ elif PLATFORM == 'android':
     pass
 
 # ------------------- Constants -------------------
+# GUI framework imports
+if IS_DESKTOP or IS_WEB:
+    import tkinter as tk
+    from tkinter import ttk, messagebox, filedialog, simpledialog, font
+
+# Space Invaders inspired theme (dark, neon green accents, retro monospace feel)
 THEME = {
-    "bg": "#f8f9fa", "text": "#212529", "btn": "#007bff", "btn_text": "white",
-    "correct": "#28a745", "wrong": "#dc3545", "high_contrast_bg": "#000000", "high_contrast_text": "#FFFFFF"
+    "bg": "#02040b",            # deep space / near-black
+    "text": "#39ff14",          # neon green (classic invader color)
+    "muted": "#cfd8dc",         # softer body text
+    "btn": "#7c3aed",           # purple action buttons
+    "btn_text": "#ffffff",      # white on buttons
+    "correct": "#39ff14",
+    "wrong": "#ff4d6d",
+    "accent": "#00d1ff",
+    "high_contrast_bg": "#000000",
+    "high_contrast_text": "#FFFFFF"
 }
+
+# Simple SFX helper: use winsound on Windows, otherwise fall back to bell via root
+try:
+    import winsound
+    _HAS_WINSOUND = True
+except Exception:
+    winsound = None
+    _HAS_WINSOUND = False
+SFX_ENABLED = True
+
+def play_sfx(event_name, root=None):
+    """Play a small retro tone for named events.
+
+    event_name: 'chat', 'join', 'move', 'ready', etc.
+    root: optional Tk root (used for bell fallback)
+    """
+    try:
+        # map events to (freq, ms)
+        mapping = {
+            'chat': (800, 80),
+            'join': (900, 110),
+            'move': (1200, 60),
+            'ready': (700, 120),
+            'error': (400, 200),
+        }
+        freq, ms = mapping.get(event_name, (1000, 60))
+        if not globals().get('SFX_ENABLED', True):
+            return
+        if _HAS_WINSOUND and winsound:
+            try:
+                winsound.Beep(int(freq), int(ms))
+            except Exception:
+                pass
+        else:
+            # fallback: bell the root window if provided
+            try:
+                if root:
+                    root.bell()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 AVATARS = ["🧑", "👧", "🐱", "🐶", "🐼", "🐰", "🦊", "🐸", "🦁", "🐯", "🦄", "🐲"]
 DEFAULT_AVATAR = AVATARS[0]
@@ -492,7 +640,7 @@ LANGUAGES = {
 }
 CURRENT_LANG = 'en'
 
-# Store profiles in a user-specific application directory to avoid permission issues
+# Store profiles and settings in a user-specific application directory to avoid permission issues
 APP_DATA_DIR = os.path.join(os.getenv('APPDATA') or os.path.expanduser('~'), 'MathBlast')
 try:
     os.makedirs(APP_DATA_DIR, exist_ok=True)
@@ -501,6 +649,51 @@ except Exception:
     APP_DATA_DIR = os.path.expanduser('~')
 
 PROFILES_FILE = os.path.join(APP_DATA_DIR, 'profiles.json')
+SETTINGS_FILE = os.path.join(APP_DATA_DIR, 'settings.json')
+
+def load_settings():
+    """Load display and performance settings from file."""
+    global SCALE_FACTOR, IS_4K, IS_8K, FPS_TARGET, HDR_ENABLED
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+                SCALE_FACTOR = float(settings.get('scale_factor', SCALE_FACTOR))
+                IS_4K = bool(settings.get('is_4k', IS_4K))
+                IS_8K = bool(settings.get('is_8k', IS_8K))
+                FPS_TARGET = int(settings.get('fps_target', FPS_TARGET))
+                HDR_ENABLED = bool(settings.get('hdr_enabled', HDR_ENABLED))
+                # sound effects toggle (persisted)
+                try:
+                    global SFX_ENABLED
+                    SFX_ENABLED = bool(settings.get('sfx_enabled', SFX_ENABLED))
+                except Exception:
+                    pass
+    except Exception as e:
+        logging.error(f"Failed to load settings: {e}")
+
+def save_settings():
+    """Save display and performance settings to file."""
+    try:
+        settings = {
+            'scale_factor': SCALE_FACTOR,
+            'is_4k': IS_4K,
+            'is_8k': IS_8K,
+            'fps_target': FPS_TARGET,
+            'hdr_enabled': HDR_ENABLED,
+            'sfx_enabled': globals().get('SFX_ENABLED', True)
+        }
+        # Write atomically using temporary file
+        tmp = SETTINGS_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(settings, f, indent=2)
+        os.replace(tmp, SETTINGS_FILE)
+        logging.info("Settings saved successfully")
+    except Exception as e:
+        logging.error(f"Failed to save settings: {e}")
+
+# Load settings at startup
+load_settings()
 SERVER_URL = None  # Set to your backend for online sync
 
 # Current profile pointer
@@ -724,6 +917,32 @@ class VoiceMath:
 
 voice_engine = VoiceMath()
 
+# Networking defaults for lobby
+DEFAULT_LOBBY_HOST = '127.0.0.1'
+DEFAULT_LOBBY_PORT = 5000
+
+# simple sound helper (winsound on Windows)
+try:
+    import winsound
+    def play_sfx(kind='blip'):
+        try:
+            if kind == 'chat':
+                winsound.Beep(900, 80)
+            elif kind == 'join':
+                winsound.Beep(1200, 100)
+            elif kind == 'ready':
+                winsound.Beep(700, 70)
+            elif kind == 'unlock':
+                winsound.Beep(1500, 150)
+            else:
+                winsound.Beep(800, 60)
+        except Exception:
+            pass
+except Exception:
+    def play_sfx(kind='blip'):
+        # fallback: no-op
+        return
+
 # ------------------- Handwriting recognizer (ONNX stub) -------------------
 handwriting_recognizer = None
 try:
@@ -744,6 +963,9 @@ except Exception:
 
 
 # ------------------- GUI: Tkinter (Desktop) -------------------
+import tkinter as tk
+from tkinter import ttk, messagebox
+
 class MathBlastTk:
     def __init__(self, root):
         self.root = root
@@ -1038,25 +1260,55 @@ class MathBlastTk:
             
         try:
             sync_profiles_to_icloud()
+        except Exception as e:
+            logging.error(f"Failed to sync profile to iCloud: {e}")
 
     def build_ui(self):
-        self.main_frame = tk.Frame(self.root, bg=THEME["bg"])
-        self.main_frame.pack(expand=True, fill="both", padx=20, pady=20)
+        try:
+            self.main_frame = tk.Frame(self.root, bg=THEME["bg"])
+            self.main_frame.pack(expand=True, fill="both", padx=20, pady=20)
 
-        # keep references so we can update fonts later when SCALE_FACTOR is computed
-        self.title_label = tk.Label(self.main_frame, text="MathBlast", font=("Arial", font_size(32), "bold"), bg=THEME["bg"])
-        self.title_label.pack(pady=20)
-        # current profile label
-        cur = get_current_profile() or "Player"
-        self.current_profile_name = cur
-        self.profile_label = tk.Label(self.main_frame, text=f"Profile: {cur}", font=("Arial", font_size(12)), bg=THEME["bg"]) 
-        self.profile_label.pack()
-        self.start_btn = tk.Button(self.main_frame, text="Start Game", command=self.start_game, bg=THEME["btn"], fg=THEME["btn_text"], font=("Arial", font_size(14)))
-        self.start_btn.pack(pady=10)
-        self.voice_btn = tk.Button(self.main_frame, text="Voice Mode (Headphones)", command=voice_engine.start, bg="#28a745", fg="white", font=("Arial", font_size(12)))
-        self.voice_btn.pack(pady=5)
-        self.settings_btn = tk.Button(self.main_frame, text="Settings", command=self.show_settings, font=("Arial", font_size(12)))
-        self.settings_btn.pack(pady=5)
+            # keep references so we can update fonts later when SCALE_FACTOR is computed
+            # Retro-styled title
+            self.title_label = tk.Label(self.main_frame, text="Math Blast", font=("Courier", font_size(32), "bold"), bg=THEME["bg"], fg=THEME["text"])
+            self.title_label.pack(pady=20)
+            
+            # current profile label
+            cur = get_current_profile() or "Player"
+            self.current_profile_name = cur
+            self.profile_label = tk.Label(self.main_frame, text=f"Profile: {cur}", font=("Arial", font_size(12)), bg=THEME["bg"]) 
+            self.profile_label.pack()
+            
+            # Game mode buttons frame
+            mode_frame = tk.Frame(self.main_frame, bg=THEME["bg"])
+            mode_frame.pack(pady=10)
+            
+            self.start_btn = tk.Button(mode_frame, text="Single Player", 
+                                     command=self.start_game,
+                                     bg=THEME["btn"], fg=THEME["btn_text"], 
+                                     font=("Arial", font_size(14)))
+            self.start_btn.pack(side=tk.LEFT, padx=5)
+
+            # Adventure mode - unlocks chapters as player progresses
+            self.adventure_btn = tk.Button(mode_frame, text="Adventure Mode",
+                                           command=self.show_adventure_menu,
+                                           bg=THEME["btn"], fg=THEME["btn_text"],
+                                           font=("Arial", font_size(14)))
+            self.adventure_btn.pack(side=tk.LEFT, padx=5)
+
+            self.online_btn = tk.Button(mode_frame, text="Online Mode", 
+                                      command=self.create_online_lobby,
+                                      bg=THEME["btn"], fg=THEME["btn_text"], 
+                                      font=("Arial", font_size(14)))
+            self.online_btn.pack(side=tk.LEFT, padx=5)
+
+            self.voice_btn = tk.Button(self.main_frame, text="Voice Mode (Headphones)", command=voice_engine.start, bg=THEME["btn"], fg=THEME["btn_text"], font=("Arial", font_size(12)))
+            self.voice_btn.pack(pady=5)
+            self.settings_btn = tk.Button(self.main_frame, text="Settings", command=self.show_settings, bg=THEME["btn"], fg=THEME["btn_text"], font=("Arial", font_size(12)))
+            self.settings_btn.pack(pady=5)
+        except Exception as e:
+            logging.error(f"Failed to build UI: {e}")
+            raise
 
     def update_fonts(self):
         """Re-apply scaled fonts to widgets after SCALE_FACTOR is computed."""
@@ -1080,6 +1332,353 @@ class MathBlastTk:
                 self.answer_entry.config(font=("Arial", font_size(18)))
         except Exception as e:
             logging.debug(f"update_fonts failed: {e}")
+
+    # ------------ Multiplayer lobby and Adventure mode (class-level methods) ----------
+    def create_online_lobby(self):
+        """Create and display the online multiplayer lobby with a Space-Invaders theme."""
+        # Hide main menu
+        try:
+            self.main_frame.pack_forget()
+        except Exception:
+            pass
+
+        # Dark themed lobby frame for Space-Invaders feel
+        self.lobby_frame = tk.Frame(self.root, bg=THEME["bg"])
+        self.lobby_frame.pack(expand=True, fill="both", padx=20, pady=20)
+
+        # Themed header
+        # Header (user requested to show 'Online Play' on the online node screen)
+        tk.Label(self.lobby_frame, text="Online Play", 
+                 font=("Courier", font_size(28), "bold"),
+                 bg=THEME["high_contrast_bg"], fg=THEME["text"], padx=10, pady=6).pack(fill="x", pady=(0,10))
+
+        top_row = tk.Frame(self.lobby_frame, bg=THEME["bg"])
+        top_row.pack(fill="x", padx=10, pady=5)
+
+        self.status_label = tk.Label(top_row, text="Connecting to server...",
+                                     font=("Arial", font_size(12)), bg=THEME["bg"], fg=THEME["muted"])
+        self.status_label.pack(side=tk.LEFT)
+
+        # Animated invader canvas on the right
+        self.invader_canvas = tk.Canvas(top_row, width=200, height=80, bg=THEME["high_contrast_bg"], highlightthickness=0)
+        self.invader_canvas.pack(side=tk.RIGHT)
+        self._invader_items = []
+        for x in range(20, 180, 30):
+            it = self.invader_canvas.create_rectangle(x, 20, x+18, 30, fill=THEME["text"])
+            self._invader_items.append(it)
+
+        # Players and chat area
+        mid = tk.Frame(self.lobby_frame, bg=THEME["bg"])
+        mid.pack(fill="both", expand=True, padx=10, pady=5)
+
+        players_frame = tk.LabelFrame(mid, text="Players", bg=THEME["high_contrast_bg"], fg=THEME["text"])
+        players_frame.pack(side=tk.LEFT, fill="both", expand=True, padx=(0,5))
+
+        columns = ('name', 'status', 'level')
+        self.players_tree = ttk.Treeview(players_frame, columns=columns, show='headings', height=8)
+        scrollbar = ttk.Scrollbar(players_frame, orient="vertical", command=self.players_tree.yview)
+        self.players_tree.configure(yscrollcommand=scrollbar.set)
+        self.players_tree.pack(side=tk.LEFT, fill="both", expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill="y")
+        self.players_tree.heading('name', text='Player')
+        self.players_tree.heading('status', text='Status')
+        self.players_tree.heading('level', text='Level')
+
+        # Chat area
+        chat_frame = tk.LabelFrame(mid, text="Chat", bg=THEME["high_contrast_bg"], fg=THEME["text"])
+        chat_frame.pack(side=tk.RIGHT, fill="both", expand=True, padx=(5,0))
+        self.chat_text = tk.Text(chat_frame, height=8, font=("Consolas", font_size(11)), bg=THEME["bg"], fg=THEME["muted"])
+        chat_scroll = ttk.Scrollbar(chat_frame, orient="vertical", command=self.chat_text.yview)
+        self.chat_text.configure(yscrollcommand=chat_scroll.set)
+        self.chat_text.pack(side=tk.LEFT, fill="both", expand=True)
+        chat_scroll.pack(side=tk.RIGHT, fill="y")
+
+        input_frame = tk.Frame(self.lobby_frame, bg=THEME["bg"])
+        input_frame.pack(fill="x", padx=10, pady=6)
+        self.chat_entry = tk.Entry(input_frame, font=("Arial", font_size(12)), bg=THEME["high_contrast_bg"], fg=THEME["text"])
+        self.chat_entry.pack(side=tk.LEFT, fill="x", expand=True)
+        self.send_btn = tk.Button(input_frame, text="Send", command=self.send_chat, bg=THEME["btn"], fg=THEME["btn_text"])
+        self.send_btn.pack(side=tk.RIGHT, padx=6)
+
+        controls = tk.Frame(self.lobby_frame, bg=THEME["bg"])
+        controls.pack(fill="x", padx=10, pady=6)
+        self.ready_btn = tk.Button(controls, text="Ready", command=self.toggle_ready, bg=THEME["btn"], fg=THEME["btn_text"])
+        self.ready_btn.pack(side=tk.LEFT)
+        self.exit_btn = tk.Button(controls, text="Exit Lobby", command=self.exit_lobby, bg=THEME["wrong"], fg=THEME["btn_text"])
+        self.exit_btn.pack(side=tk.RIGHT)
+
+        # Simulated multiplayer state
+        self.player_ready = False
+        self.lobby_players = {}
+
+        # Start small invader animation and simulated connect
+        self._invader_dx = 2
+        self.animate_invaders()
+        self.connect_to_lobby()
+
+    def animate_invaders(self):
+        """Simple animation for the invader blocks to give a Space-Invaders feel."""
+        try:
+            for it in self._invader_items:
+                self.invader_canvas.move(it, self._invader_dx, 0)
+                x1, y1, x2, y2 = self.invader_canvas.coords(it)
+                if x2 >= 200 or x1 <= 0:
+                    self._invader_dx = -self._invader_dx
+                    # move all items down a bit
+                    for it2 in self._invader_items:
+                        self.invader_canvas.move(it2, 0, 6)
+                    try:
+                        play_sfx('move', root=self.root)
+                    except Exception:
+                        pass
+                    break
+        except Exception:
+            pass
+        # schedule next frame
+        try:
+            self.root.after(120, self.animate_invaders)
+        except Exception:
+            pass
+
+    def connect_to_lobby(self):
+        """Attempt to connect to a local lobby server; fall back to simulated mode."""
+        # If already connected, return
+        try:
+            self.net_sock
+        except AttributeError:
+            self.net_sock = None
+
+        # Try to connect to a local server
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect((DEFAULT_LOBBY_HOST, DEFAULT_LOBBY_PORT))
+            s.settimeout(None)
+            self.net_sock = s
+            # register our name
+            myname = self.current_profile_name or get_current_profile() or 'Player'
+            try:
+                s.sendall((f'JOIN:{myname}\n').encode('utf-8'))
+            except Exception:
+                pass
+            # start receiver thread
+            self.net_stop = False
+            t = threading.Thread(target=self._network_listener, args=(s,), daemon=True)
+            t.start()
+            self.status_label.config(text=f"Connected to lobby at {DEFAULT_LOBBY_HOST}:{DEFAULT_LOBBY_PORT}", fg=THEME["muted"])
+            return
+        except Exception:
+            # fallback to simulated players
+            try:
+                self.status_label.config(text="Offline lobby (local server not running)", fg=THEME["muted"])
+            except Exception:
+                pass
+
+        # simulated players when offline
+        try:
+            test_players = [(self.current_profile_name or "Player", "You", str(self.level)),
+                            ("InvaderAce", "Waiting", "4"),
+                            ("StarGazer", "Ready", "7")]
+            for p in test_players:
+                self.players_tree.insert('', 'end', values=p)
+            self.add_chat_message("System", "Welcome to Space Blast Lobby! (offline)")
+        except Exception as e:
+            logging.error(f"Lobby connect error: {e}")
+
+    def _network_listener(self, sock):
+        """Background listener for lobby server messages."""
+        buf = b""
+        try:
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                buf += data
+                while b'\n' in buf:
+                    line, buf = buf.split(b'\n', 1)
+                    try:
+                        sline = line.decode('utf-8')
+                    except Exception:
+                        continue
+                    # dispatch to UI thread
+                    self.root.after(0, self._handle_network_line, sline)
+        except Exception:
+            pass
+        finally:
+            # connection closed
+            try:
+                sock.close()
+            except Exception:
+                pass
+            self.root.after(0, lambda: self.add_chat_message('System', 'Disconnected from lobby'))
+
+    def _handle_network_line(self, line):
+        """Handle a received network line on the UI thread."""
+        try:
+            if line.startswith('CHAT:'):
+                # CHAT:name:message
+                parts = line.split(':', 2)
+                if len(parts) == 3:
+                    name, msg = parts[1], parts[2]
+                    self.add_chat_message(name, msg)
+            elif line.startswith('JOIN:'):
+                name = line.split(':',1)[1]
+                # add to players
+                try:
+                    self.players_tree.insert('', 'end', values=(name, 'Waiting', '1'))
+                except Exception:
+                    pass
+                play_sfx('join')
+                self.add_chat_message('System', f'{name} joined the lobby')
+            elif line.startswith('LEAVE:'):
+                name = line.split(':',1)[1]
+                # remove entries with that name
+                try:
+                    for iid in list(self.players_tree.get_children()):
+                        vals = self.players_tree.item(iid).get('values', [])
+                        if vals and vals[0] == name:
+                            self.players_tree.delete(iid)
+                except Exception:
+                    pass
+                self.add_chat_message('System', f'{name} left the lobby')
+            elif line.startswith('READY:'):
+                parts = line.split(':',2)
+                if len(parts) == 3:
+                    name, state = parts[1], parts[2]
+                    # update player status
+                    try:
+                        for iid in self.players_tree.get_children():
+                            vals = list(self.players_tree.item(iid).get('values', []))
+                            if vals and vals[0] == name:
+                                vals[1] = 'Ready' if state == '1' else 'Waiting'
+                                self.players_tree.item(iid, values=vals)
+                                break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def send_chat(self):
+        msg = self.chat_entry.get().strip()
+        if not msg:
+            return
+        name = self.current_profile_name or get_current_profile() or "Player"
+        # send over network if available
+        try:
+            if getattr(self, 'net_sock', None):
+                try:
+                    self.net_sock.sendall((f'CHAT:{name}:{msg}\n').encode('utf-8'))
+                except Exception:
+                    # if send fails, fall back to local display
+                    self.add_chat_message(name, msg)
+            else:
+                self.add_chat_message(name, msg)
+        except Exception:
+            self.add_chat_message(name, msg)
+        self.chat_entry.delete(0, tk.END)
+
+    def add_chat_message(self, sender, message):
+        try:
+            self.chat_text.configure(state='normal')
+            self.chat_text.insert('end', f"{sender}: {message}\n")
+            self.chat_text.see('end')
+            self.chat_text.configure(state='disabled')
+            play_sfx('chat')
+        except Exception:
+            pass
+
+    def toggle_ready(self):
+        self.player_ready = not self.player_ready
+        self.ready_btn.config(text=("Not Ready" if self.player_ready else "Ready"),
+                              bg=(THEME["wrong"] if self.player_ready else THEME["btn"]))
+        # notify server if connected
+        try:
+            if getattr(self, 'net_sock', None):
+                name = self.current_profile_name or get_current_profile() or 'Player'
+                state = '1' if self.player_ready else '0'
+                try:
+                    self.net_sock.sendall((f'READY:{name}:{state}\n').encode('utf-8'))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def exit_lobby(self):
+        if messagebox.askyesno("Exit Lobby", "Leave the Space Blast Lobby?"):
+            try:
+                self.lobby_frame.pack_forget()
+            except Exception:
+                pass
+            # close network socket if present
+            try:
+                if getattr(self, 'net_sock', None):
+                    try:
+                        self.net_sock.close()
+                    except Exception:
+                        pass
+                    self.net_sock = None
+            except Exception:
+                pass
+            self.main_frame.pack(expand=True, fill="both", padx=20, pady=20)
+
+    # Adventure Mode: chapters unlock as player reaches thresholds
+    def show_adventure_menu(self):
+        wnd = tk.Toplevel(self.root)
+        wnd.title("Adventure Mode")
+        wnd.geometry("480x360")
+        wnd.configure(bg=THEME["bg"])
+
+        tk.Label(wnd, text="Adventure Mode", font=("Arial", font_size(18), "bold"), bg=THEME["bg"]).pack(pady=10)
+
+        # Define thresholds
+        thresholds = {1:1, 2:3, 3:6, 4:9, 5:12}
+        profiles = load_profiles()
+        name = self.current_profile_name or get_current_profile() or "Player"
+        p = profiles.get(name, {})
+        unlocked = p.get('adventure_unlocked', 1)
+
+        frame = tk.Frame(wnd, bg=THEME["bg"]) 
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        for ch in range(1,6):
+            row = tk.Frame(frame, bg=THEME["bg"])
+            row.pack(fill="x", pady=4)
+            title = f"Chapter {ch}"
+            status = "Unlocked" if ch <= unlocked else f"Locked (reach level {thresholds[ch]})"
+            tk.Label(row, text=title, width=20, anchor='w', bg=THEME["bg"]).pack(side=tk.LEFT)
+            tk.Label(row, text=status, width=25, anchor='w', bg=THEME["bg"]).pack(side=tk.LEFT)
+            btn = tk.Button(row, text="Play", state=(tk.NORMAL if ch <= unlocked else tk.DISABLED),
+                            command=lambda c=ch: (wnd.destroy(), self.start_adventure(c)))
+            btn.pack(side=tk.RIGHT)
+
+    def start_adventure(self, chapter):
+        """Start adventure at chapter; set level to threshold and begin game."""
+        thresholds = {1:1, 2:3, 3:6, 4:9, 5:12}
+        start_level = thresholds.get(chapter, 1)
+        self.level = start_level
+        # ensure profile current level saved
+        save_profile(self.current_profile_name or get_current_profile() or "Player", self.level, self.total_correct, stats={'adventure_unlocked': chapter})
+        # Start the normal game loop but in adventure context
+        self.start_game()
+
+    def update_adventure_progress(self):
+        """Unlock adventure chapters based on current level and save to profile."""
+        try:
+            thresholds = {1:1, 2:3, 3:6, 4:9, 5:12}
+            name = self.current_profile_name or get_current_profile() or "Player"
+            profiles = load_profiles()
+            p = profiles.setdefault(name, {})
+            current_unlocked = p.get('adventure_unlocked', 1)
+            new_unlocked = current_unlocked
+            for ch, lvl in thresholds.items():
+                if self.level >= lvl and ch > new_unlocked:
+                    new_unlocked = ch
+            if new_unlocked != current_unlocked:
+                p['adventure_unlocked'] = new_unlocked
+                # save via save_profile to merge safely
+                save_profile(name, self.level, self.total_correct, stats={'adventure_unlocked': new_unlocked})
+        except Exception as e:
+            logging.debug(f"Adventure progress update failed: {e}")
 
     def start_game(self):
         self.main_frame.pack_forget()
@@ -1184,12 +1783,21 @@ class MathBlastTk:
         
         # Sync progress to iCloud
         self.sync_profile()
+        # Update adventure progress (unlock chapters if thresholds reached)
+        try:
+            self.update_adventure_progress()
+        except Exception:
+            pass
         
         self.next_problem()
 
     def game_over(self):
         messagebox.showinfo("Game Over", f"Game Over! You reached Level {self.level}")
         save_profile(self.current_profile_name or "Player", self.level, self.total_correct)
+        try:
+            self.update_adventure_progress()
+        except Exception:
+            pass
         
         # Final Game Center updates
         self.update_score('high_score', self.level)
@@ -1240,6 +1848,22 @@ class MathBlastTk:
             sound_frame = tk.Frame(notebook, bg=THEME["bg"])
             notebook.add(sound_frame, text=" 🔊 Sound ")
 
+            # Sound options: SFX toggle
+            try:
+                sfx_var = tk.BooleanVar(value=globals().get('SFX_ENABLED', True))
+                def _on_sfx_toggle():
+                    try:
+                        globals()['SFX_ENABLED'] = bool(sfx_var.get())
+                        save_settings()
+                    except Exception:
+                        pass
+
+                sfx_chk = tk.Checkbutton(sound_frame, text="Enable Sound Effects", variable=sfx_var,
+                                         command=_on_sfx_toggle, bg=THEME["bg"], fg=THEME["text"], selectcolor=THEME["bg"])
+                sfx_chk.pack(anchor='w', padx=20, pady=10)
+            except Exception:
+                pass
+
             # Display tab
             display_frame = tk.Frame(notebook, bg=THEME["bg"])
             notebook.add(display_frame, text=" 🖥️ Display ")
@@ -1256,6 +1880,90 @@ class MathBlastTk:
             teacher_frame = tk.Frame(notebook, bg=THEME["bg"])
             notebook.add(teacher_frame, text=" 📚 Teacher Dashboard ")
 
+            # Teacher portal sprite loader: prefer an assets PNG exported from Aseprite (.aseprite -> export PNG).
+            try:
+                sprite_candidates = [
+                    os.path.join(os.path.dirname(__file__), 'assets', 'teacher_portal.png'),
+                    os.path.join(APP_DATA_DIR, 'teacher_portal.png'),
+                    os.path.join(os.path.dirname(__file__), 'teacher_portal.png')
+                ]
+                sprite_file = None
+                for p in sprite_candidates:
+                    if os.path.exists(p):
+                        sprite_file = p
+                        break
+
+                aseprite_hint = os.path.join(os.path.dirname(__file__), 'teacher_portal.aseprite')
+
+                if sprite_file:
+                    # display sprite using tkinter PhotoImage
+                    try:
+                        img = tk.PhotoImage(file=sprite_file)
+                        lbl = tk.Label(teacher_frame, image=img, bg=THEME["bg"]) 
+                        lbl.image = img
+                        lbl.pack(pady=12)
+                        tk.Label(teacher_frame, text="Teacher Portal (sprite)", fg=THEME["muted"], bg=THEME["bg"]).pack()
+                    except Exception:
+                        tk.Label(teacher_frame, text=f"Found sprite but failed to load: {sprite_file}", fg=THEME["muted"], bg=THEME["bg"]).pack(pady=8)
+                elif os.path.exists(aseprite_hint):
+                    tk.Label(teacher_frame, text="Aseprite source found (teacher_portal.aseprite).\nPlease export a PNG to assets/teacher_portal.png to enable the sprite view.", fg=THEME["muted"], bg=THEME["bg"]).pack(pady=12)
+                else:
+                    # If no sprite and no Aseprite source, create a small placeholder PNG file
+                    try:
+                        assets_dir = os.path.join(os.path.dirname(__file__), 'assets')
+                        os.makedirs(assets_dir, exist_ok=True)
+                        placeholder_path = os.path.join(assets_dir, 'teacher_portal.png')
+                        if not os.path.exists(placeholder_path):
+                            # Try to generate a small 32x32 PNG placeholder using Pillow if available.
+                            try:
+                                from PIL import Image, ImageDraw
+                                img = Image.new('RGBA', (32, 32), (2,4,11,255))
+                                draw = ImageDraw.Draw(img)
+                                # draw a simple retro-invader shape
+                                for y in range(8, 24, 2):
+                                    for x in range(6, 26, 2):
+                                        if (x//2 + y//2) % 2 == 0:
+                                            draw.rectangle([x, y, x+1, y+1], fill=(57,255,20,255))
+                                img.save(placeholder_path, format='PNG')
+                                sprite_file = placeholder_path
+                            except Exception:
+                                # Pillow not available or save failed: fall back to a minimal 1x1 PNG
+                                b64 = b'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGMAAQAABQABDQottAAAAABJRU5ErkJggg=='
+                                try:
+                                    with open(placeholder_path, 'wb') as f:
+                                        f.write(__import__('base64').b64decode(b64))
+                                    sprite_file = placeholder_path
+                                except Exception:
+                                    sprite_file = None
+                        else:
+                            sprite_file = placeholder_path
+
+                        if sprite_file and os.path.exists(sprite_file):
+                            try:
+                                img = tk.PhotoImage(file=sprite_file)
+                                lbl = tk.Label(teacher_frame, image=img, bg=THEME["bg"]) 
+                                lbl.image = img
+                                lbl.pack(pady=12)
+                                tk.Label(teacher_frame, text="Teacher Portal (sprite placeholder)", fg=THEME["muted"], bg=THEME["bg"]).pack()
+                            except Exception:
+                                tk.Label(teacher_frame, text="Unable to load generated placeholder sprite.", fg=THEME["muted"], bg=THEME["bg"]).pack(pady=8)
+                        else:
+                            # Fallback to small pixel-art canvas if file creation fails
+                            canvas = tk.Canvas(teacher_frame, width=160, height=120, bg=THEME["bg"], highlightthickness=0)
+                            canvas.pack(pady=10)
+                            blocks = [
+                                (5,5,10, THEME["text"]), (25,5,10, THEME["text"]), (45,5,10, THEME["text"]),
+                                (15,25,10, THEME["muted"]), (35,25,10, THEME["muted"]),
+                                (25,45,10, THEME["accent"]),
+                                (15,65,10, THEME["btn"]), (35,65,10, THEME["btn"]) 
+                            ]
+                            for x,y,s,c in blocks:
+                                canvas.create_rectangle(x, y, x+s, y+s, fill=c, outline=c)
+                            tk.Label(teacher_frame, text="Teacher Portal (sprite placeholder)", fg=THEME["muted"], bg=THEME["bg"]).pack()
+                    except Exception as e:
+                        logging.debug(f"Placeholder sprite creation failed: {e}")
+            except Exception as e:
+                logging.debug(f"Teacher portal sprite loader failed: {e}")
             # Profile Management Section
             profile_top = tk.Frame(profile_frame, bg=THEME["bg"])
             profile_top.pack(fill="x", padx=20, pady=10)
@@ -1423,7 +2131,7 @@ class MathBlastTk:
             
             del_btn = tk.Button(actions_frame, text="❌ Delete", 
                               command=delete_selected,
-                              bg="#dc3545", fg="white",
+                              bg=THEME["wrong"], fg=THEME["btn_text"],
                               **button_style)
             del_btn.pack(side=tk.LEFT, padx=5)
             
@@ -1687,14 +2395,140 @@ class MathBlastTk:
                                      textvariable=window_var, state="readonly", width=20)
             window_menu.pack(side=tk.LEFT, padx=5)
 
+            # Advanced Display Section
+            display_section = tk.LabelFrame(scrollable_frame, text="Advanced Display", 
+                                          bg=THEME["bg"], fg=THEME["text"])
+            display_section.pack(fill="x", padx=10, pady=5)
+
+            # 4K Toggle
+            res_frame = tk.Frame(display_section, bg=THEME["bg"])
+            res_frame.pack(fill="x", padx=10, pady=5)
+            
+            def toggle_4k():
+                if enable_4k_var.get():
+                    try:
+                        # Get screen resolution
+                        screen_w = self.root.winfo_screenwidth()
+                        if screen_w >= 3840:
+                            globals()['IS_4K'] = True
+                            globals()['SCALE_FACTOR'] = 2.0
+                            globals()['FPS_TARGET'] = 60
+                            self.update_fonts()
+                            save_settings()
+                            messagebox.showinfo("Display", "4K mode enabled. Changes will take effect after restart.")
+                        else:
+                            enable_4k_var.set(False)
+                            messagebox.showwarning("Display", "4K resolution not supported on this display.")
+                    except Exception as e:
+                        logging.error(f"4K toggle failed: {e}")
+                        enable_4k_var.set(False)
+                else:
+                    globals()['IS_4K'] = False
+                    globals()['SCALE_FACTOR'] = 1.0
+                    globals()['FPS_TARGET'] = 60
+                    self.update_fonts()
+                    save_settings()
+                
+            enable_4k_var = tk.BooleanVar(value=IS_4K)
+            tk.Checkbutton(res_frame, text="Enable 4K Mode", variable=enable_4k_var,
+                          command=toggle_4k, bg=THEME["bg"]).pack(side=tk.LEFT)
+            
+            # HDR Toggle
+            hdr_frame = tk.Frame(display_section, bg=THEME["bg"])
+            hdr_frame.pack(fill="x", padx=10, pady=5)
+            
+            def toggle_hdr():
+                if enable_hdr_var.get():
+                    try:
+                        # Check Windows HDR support
+                        import ctypes
+                        try:
+                            GetAutoHDRSupport = ctypes.windll.user32.GetAutoHDRSupport
+                            if GetAutoHDRSupport():
+                                globals()['HDR_ENABLED'] = True
+                                save_settings()
+                                messagebox.showinfo("Display", "HDR enabled. Changes will take effect after restart.")
+                            else:
+                                enable_hdr_var.set(False)
+                                messagebox.showwarning("Display", "HDR not supported on this system.")
+                        except AttributeError:
+                            enable_hdr_var.set(False)
+                            messagebox.showwarning("Display", "HDR support check failed.")
+                    except Exception as e:
+                        logging.error(f"HDR toggle failed: {e}")
+                        enable_hdr_var.set(False)
+                else:
+                    globals()['HDR_ENABLED'] = False
+                    save_settings()
+            
+            enable_hdr_var = tk.BooleanVar(value=HDR_ENABLED)
+            tk.Checkbutton(hdr_frame, text="Enable HDR", variable=enable_hdr_var,
+                          command=toggle_hdr, bg=THEME["bg"]).pack(side=tk.LEFT)
+            
+            # Auto Low Latency Mode (ALLM)
+            latency_frame = tk.Frame(display_section, bg=THEME["bg"])
+            latency_frame.pack(fill="x", padx=10, pady=5)
+            
+            def toggle_allm():
+                if enable_allm_var.get():
+                    try:
+                        # Try to enable ALLM through Windows API
+                        import ctypes
+                        try:
+                            SetGameMode = ctypes.windll.user32.SetThreadExecutionState
+                            ES_DISPLAY_REQUIRED = 0x00000002
+                            ES_SYSTEM_REQUIRED = 0x00000001
+                            if SetGameMode(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED):
+                                messagebox.showinfo("Display", "Auto Low Latency Mode enabled.")
+                                return
+                        except AttributeError:
+                            pass
+                        enable_allm_var.set(False)
+                        messagebox.showwarning("Display", "Auto Low Latency Mode not supported.")
+                    except Exception as e:
+                        logging.error(f"ALLM toggle failed: {e}")
+                        enable_allm_var.set(False)
+                else:
+                    try:
+                        import ctypes
+                        SetGameMode = ctypes.windll.user32.SetThreadExecutionState
+                        SetGameMode(0x80000000)  # ES_CONTINUOUS
+                    except:
+                        pass
+            
+            enable_allm_var = tk.BooleanVar(value=False)
+            allm_btn = tk.Checkbutton(latency_frame, text="Auto Low Latency Mode", 
+                                    variable=enable_allm_var,
+                                    command=toggle_allm, bg=THEME["bg"])
+            allm_btn.pack(side=tk.LEFT)
+            
+            # Help text
+            help_frame = tk.Frame(display_section, bg=THEME["bg"])
+            help_frame.pack(fill="x", padx=10, pady=5)
+            help_text = (
+                "4K Mode: Enables high resolution mode for 4K displays\n"
+                "HDR: High Dynamic Range for better colors and contrast\n"
+                "ALLM: Reduces input lag by optimizing display processing"
+            )
+            tk.Label(help_frame, text=help_text, justify=tk.LEFT, 
+                    bg=THEME["bg"], font=("Arial", font_size(10))).pack(anchor="w")
+
             # Visual Effects Section
             effects_section = tk.LabelFrame(scrollable_frame, text="Visual Effects", 
                                           bg=THEME["bg"], fg=THEME["text"])
             effects_section.pack(fill="x", padx=10, pady=5)
 
-            # Animation speed
-            anim_frame = tk.Frame(effects_section, bg=THEME["bg"])
-            anim_frame.pack(fill="x", padx=10, pady=5)
+            # Performance & Effects
+            perf_frame = tk.Frame(effects_section, bg=THEME["bg"])
+            perf_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Left column
+            perf_left = tk.Frame(perf_frame, bg=THEME["bg"])
+            perf_left.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # Animation Speed
+            anim_frame = tk.Frame(perf_left, bg=THEME["bg"])
+            anim_frame.pack(fill="x", pady=2)
             tk.Label(anim_frame, text="Animation Speed:", 
                     bg=THEME["bg"]).pack(side=tk.LEFT, padx=5)
             anim_var = tk.StringVar(value="Normal")
@@ -1703,7 +2537,273 @@ class MathBlastTk:
                                    textvariable=anim_var, state="readonly", width=15)
             anim_menu.pack(side=tk.LEFT, padx=5)
 
-            # Visual effects toggles
+            # FPS Limit
+            fps_frame = tk.Frame(perf_left, bg=THEME["bg"])
+            fps_frame.pack(fill="x", pady=2)
+            tk.Label(fps_frame, text="FPS Limit:", 
+                    bg=THEME["bg"]).pack(side=tk.LEFT, padx=5)
+            fps_var = tk.StringVar(value=str(FPS_TARGET))
+            fps_menu = ttk.Combobox(fps_frame, 
+                                  values=["30", "60", "120", "144", "240", "Unlimited"],
+                                  textvariable=fps_var, state="readonly", width=15)
+            fps_menu.pack(side=tk.LEFT, padx=5)
+
+            # Right column
+            perf_right = tk.Frame(perf_frame, bg=THEME["bg"])
+            perf_right.pack(side=tk.LEFT, fill="x", expand=True)
+
+            # Performance Mode
+            perf_mode_frame = tk.Frame(perf_right, bg=THEME["bg"])
+            perf_mode_frame.pack(fill="x", pady=2)
+            tk.Label(perf_mode_frame, text="Performance:", 
+                    bg=THEME["bg"]).pack(side=tk.LEFT, padx=5)
+            perf_var = tk.StringVar(value="Balanced")
+            perf_menu = ttk.Combobox(perf_mode_frame, 
+                                   values=["Power Saver", "Balanced", "Performance", "Ultra"],
+                                   textvariable=perf_var, state="readonly", width=15)
+            perf_menu.pack(side=tk.LEFT, padx=5)
+
+            # Visual features
+            features_section = tk.LabelFrame(scrollable_frame, text="Game Features", 
+                                          bg=THEME["bg"], fg=THEME["text"])
+            features_section.pack(fill="x", padx=10, pady=5)
+
+            # Features frame
+            features_frame = tk.Frame(features_section, bg=THEME["bg"])
+            features_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Left column features
+            features_left = tk.Frame(features_frame, bg=THEME["bg"])
+            features_left.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # Visual Features
+            tk.Label(features_left, text="Visual Features:", 
+                    font=("Arial", font_size(10), "bold"),
+                    bg=THEME["bg"]).pack(anchor="w", padx=5, pady=2)
+            
+            shadow_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_left, text="Dynamic Shadows", variable=shadow_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            blur_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_left, text="Background Blur", variable=blur_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            particles_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_left, text="Particle Effects", variable=particles_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            trans_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_left, text="Transparency", variable=trans_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+
+            # Right column features
+            features_right = tk.Frame(features_frame, bg=THEME["bg"])
+            features_right.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # Gameplay Features
+            tk.Label(features_right, text="Gameplay Features:", 
+                    font=("Arial", font_size(10), "bold"),
+                    bg=THEME["bg"]).pack(anchor="w", padx=5, pady=2)
+            
+            haptic_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_right, text="Haptic Feedback", variable=haptic_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            sound_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_right, text="Sound Effects", variable=sound_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            voice_var = tk.BooleanVar(value=VOICE_AVAILABLE)
+            tk.Checkbutton(features_right, text="Voice Commands", variable=voice_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            cloud_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(features_right, text="Cloud Sync", variable=cloud_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+
+            # Online Features Section
+            online_section = tk.LabelFrame(scrollable_frame, text="Online Features", 
+                                         bg=THEME["bg"], fg=THEME["text"])
+            online_section.pack(fill="x", padx=10, pady=5)
+
+            # Online frame
+            online_frame = tk.Frame(online_section, bg=THEME["bg"])
+            online_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Left column online
+            online_left = tk.Frame(online_frame, bg=THEME["bg"])
+            online_left.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # Multiplayer Features
+            tk.Label(online_left, text="Multiplayer:", 
+                    font=("Arial", font_size(10), "bold"),
+                    bg=THEME["bg"]).pack(anchor="w", padx=5, pady=2)
+            
+            matchmaking_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(online_left, text="Quick Match", variable=matchmaking_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            custom_game_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(online_left, text="Custom Games", variable=custom_game_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            crossplay_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(online_left, text="Cross-platform Play", variable=crossplay_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+
+            # Right column online
+            online_right = tk.Frame(online_frame, bg=THEME["bg"])
+            online_right.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # Community Features
+            tk.Label(online_right, text="Community:", 
+                    font=("Arial", font_size(10), "bold"),
+                    bg=THEME["bg"]).pack(anchor="w", padx=5, pady=2)
+            
+            leaderboard_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(online_right, text="Leaderboards", variable=leaderboard_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            achievements_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(online_right, text="Achievements", variable=achievements_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            friend_system_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(online_right, text="Friend System", variable=friend_system_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+
+            # Connection settings frame
+            connection_frame = tk.Frame(online_section, bg=THEME["bg"])
+            connection_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Server region
+            region_frame = tk.Frame(connection_frame, bg=THEME["bg"])
+            region_frame.pack(fill="x", pady=2)
+            tk.Label(region_frame, text="Server Region:", 
+                    bg=THEME["bg"]).pack(side=tk.LEFT, padx=5)
+            region_var = tk.StringVar(value="Auto")
+            region_menu = ttk.Combobox(region_frame, 
+                                     values=["Auto", "North America", "Europe", "Asia", "Oceania"],
+                                     textvariable=region_var, state="readonly", width=15)
+            region_menu.pack(side=tk.LEFT, padx=5)
+
+            # Advanced Features Section
+            advanced_section = tk.LabelFrame(scrollable_frame, text="Advanced Features", 
+                                          bg=THEME["bg"], fg=THEME["text"])
+            advanced_section.pack(fill="x", padx=10, pady=5)
+
+            # Advanced frame
+            advanced_frame = tk.Frame(advanced_section, bg=THEME["bg"])
+            advanced_frame.pack(fill="x", padx=10, pady=5)
+            
+            # Left column advanced
+            advanced_left = tk.Frame(advanced_frame, bg=THEME["bg"])
+            advanced_left.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # Graphics Features
+            tk.Label(advanced_left, text="Graphics Features:", 
+                    font=("Arial", font_size(10), "bold"),
+                    bg=THEME["bg"]).pack(anchor="w", padx=5, pady=2)
+            
+            raytracing_var = tk.BooleanVar(value=RAY_TRACING)
+            tk.Checkbutton(advanced_left, text="Ray Tracing", variable=raytracing_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            dlss_var = tk.BooleanVar(value=False)
+            tk.Checkbutton(advanced_left, text="DLSS/FSR", variable=dlss_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            vsync_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(advanced_left, text="V-Sync", variable=vsync_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+
+            # Right column advanced
+            advanced_right = tk.Frame(advanced_frame, bg=THEME["bg"])
+            advanced_right.pack(side=tk.LEFT, fill="x", expand=True)
+            
+            # System Features
+            tk.Label(advanced_right, text="System Features:", 
+                    font=("Arial", font_size(10), "bold"),
+                    bg=THEME["bg"]).pack(anchor="w", padx=5, pady=2)
+            
+            threading_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(advanced_right, text="Multi-Threading", variable=threading_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            cache_var = tk.BooleanVar(value=True)
+            tk.Checkbutton(advanced_right, text="Asset Caching", variable=cache_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+            
+            debug_var = tk.BooleanVar(value=False)
+            tk.Checkbutton(advanced_right, text="Debug Mode", variable=debug_var,
+                          bg=THEME["bg"]).pack(anchor="w", padx=20)
+
+            # Save all settings
+            def save_all_settings():
+                try:
+                    settings = {
+                        'scale_factor': SCALE_FACTOR,
+                        'is_4k': IS_4K,
+                        'is_8k': IS_8K,
+                        'fps_target': fps_var.get(),
+                        'hdr_enabled': HDR_ENABLED,
+                        'ray_tracing': raytracing_var.get(),
+                        'animation_speed': anim_var.get(),
+                        'performance_mode': perf_var.get(),
+                        'features': {
+                            'shadows': shadow_var.get(),
+                            'blur': blur_var.get(),
+                            'particles': particles_var.get(),
+                            'transparency': trans_var.get(),
+                            'haptic': haptic_var.get(),
+                            'sound': sound_var.get(),
+                            'voice': voice_var.get(),
+                            'cloud': cloud_var.get()
+                        },
+                        'online': {
+                            'multiplayer': {
+                                'quick_match': matchmaking_var.get(),
+                                'custom_games': custom_game_var.get(),
+                                'crossplay': crossplay_var.get()
+                            },
+                            'community': {
+                                'leaderboards': leaderboard_var.get(),
+                                'achievements': achievements_var.get(),
+                                'friend_system': friend_system_var.get()
+                            },
+                            'connection': {
+                                'region': region_var.get()
+                            }
+                        },
+                        'advanced': {
+                            'dlss': dlss_var.get(),
+                            'vsync': vsync_var.get(),
+                            'threading': threading_var.get(),
+                            'cache': cache_var.get(),
+                            'debug': debug_var.get()
+                        }
+                    }
+                    tmp = SETTINGS_FILE + '.tmp'
+                    with open(tmp, 'w') as f:
+                        json.dump(settings, f, indent=2)
+                    os.replace(tmp, SETTINGS_FILE)
+                    messagebox.showinfo("Settings", "All settings saved successfully!")
+                except Exception as e:
+                    logging.error(f"Failed to save settings: {e}")
+                    messagebox.showerror("Error", "Failed to save settings!")
+
+            # Save button at the bottom
+            save_frame = tk.Frame(scrollable_frame, bg=THEME["bg"])
+            save_frame.pack(fill="x", padx=10, pady=10)
+            
+            save_btn = tk.Button(save_frame, text="Save All Settings", 
+                               command=save_all_settings,
+                               bg=THEME["btn"], fg=THEME["btn_text"],
+                               font=("Arial", font_size(12)))
+            save_btn.pack(pady=5)
+
+            # Visual effects toggles (preserve original frame for compatibility)
             effects_frame = tk.Frame(effects_section, bg=THEME["bg"])
             effects_frame.pack(fill="x", padx=10, pady=5)
             
@@ -2050,10 +3150,56 @@ class MathBlastTk:
         voice_engine.speak(text)
 
 # ------------------- GUI: Kivy (Mobile) -------------------
-if GUI == 'kivy':
-    class MathBlastKivy(App):
+# Import and store Kivy components for runtime use
+kivy_components = {}
+
+# Only try to import Kivy if we're using it
+if GUI == 'kivy' and all(platform_imports.imports.get(f'kivy_{mod}', False) 
+                        for mod in ['core', 'uix', 'graphics']):
+    try:
+        # Core components
+        from kivy.app import App
+        kivy_components['App'] = App
+        
+        # UI components
+        from kivy.uix.boxlayout import BoxLayout
+        kivy_components['BoxLayout'] = BoxLayout
+        
+        from kivy.uix.label import Label
+        kivy_components['Label'] = Label
+        
+        from kivy.uix.button import Button
+        kivy_components['Button'] = Button
+        
+        from kivy.uix.textinput import TextInput
+        kivy_components['TextInput'] = TextInput
+        
+        from kivy.uix.popup import Popup
+        kivy_components['Popup'] = Popup
+        
+        # Graphics components
+        from kivy.graphics import Color, Rectangle
+        kivy_components['Color'] = Color
+        kivy_components['Rectangle'] = Rectangle
+        
+        # System components
+        from kivy.core.window import Window
+        kivy_components['Window'] = Window
+        
+        from kivy.clock import Clock
+        kivy_components['Clock'] = Clock
+        
+        logging.info("All Kivy components imported successfully")
+    except ImportError as e:
+        logging.error(f"Failed to import Kivy component: {e}")
+        GUI = None
+    except Exception as e:
+        logging.error(f"Kivy initialization error: {e}")
+        GUI = None
+    
+    class MathBlastKivy(kivy_components['App']):
         def __init__(self, **kwargs):
-            super(MathBlastKivy, self).__init__(**kwargs)
+            super().__init__(**kwargs)
             self.level = 1
             self.score = 0
             self.wrong = 0
@@ -2069,6 +3215,13 @@ if GUI == 'kivy':
             
         def build(self):
             try:
+                BoxLayout = kivy_components['BoxLayout']
+                Label = kivy_components['Label']
+                Button = kivy_components['Button']
+                Color = kivy_components['Color']
+                Rectangle = kivy_components['Rectangle']
+                
+                # Use safe Kivy imports
                 self.main_layout = BoxLayout(orientation='vertical', padding=20, spacing=10)
                 
                 # Title with shadow effect
@@ -2138,6 +3291,13 @@ if GUI == 'kivy':
 
         def start_game(self, btn):
             try:
+                # Get Kivy components
+                BoxLayout = kivy_components['BoxLayout']
+                Label = kivy_components['Label']
+                Button = kivy_components['Button']
+                TextInput = kivy_components['TextInput']
+                Clock = kivy_components['Clock']
+                
                 self.main_layout.clear_widgets()
                 
                 self.game_layout = BoxLayout(orientation='vertical', padding=20, spacing=10)
@@ -2333,6 +3493,11 @@ if GUI == 'kivy':
 
         def show_settings(self, btn):
             try:
+                # Get Kivy components
+                BoxLayout = kivy_components['BoxLayout']
+                Label = kivy_components['Label']
+                Popup = kivy_components['Popup']
+                
                 # Create settings popup
                 content = BoxLayout(orientation='vertical', padding=10)
                 
@@ -2354,6 +3519,37 @@ if GUI == 'kivy':
                 
             except Exception as e:
                 logging.error(f"Settings display failed: {e}")
+
+        def game_over(self):
+            try:
+                # Get Kivy components
+                Label = kivy_components['Label']
+                Popup = kivy_components['Popup']
+                
+                # Save progress
+                save_profile(self.current_profile_name or "Player", 
+                           self.level, self.total_correct)
+                
+                # Update platform stats
+                self.update_platform_stats('high_score', self.level)
+                self.update_platform_stats('total_solved', self.total_correct)
+                self.sync_cloud_storage()
+                
+                # Show game over popup
+                popup = Popup(
+                    title='Game Over',
+                    content=Label(
+                        text=f'Game Over!\nYou reached Level {self.level}',
+                        font_size=24
+                    ),
+                    size_hint=(0.8, 0.4)
+                )
+                popup.bind(on_dismiss=lambda x: self.back_to_menu(None))
+                popup.open()
+                
+            except Exception as e:
+                logging.error(f"Game over handling failed: {e}")
+                self.back_to_menu(None)
 
         def init_platform_features(self):
             """Initialize platform-specific features."""
@@ -2403,14 +3599,14 @@ def init_platform_features():
         if PLATFORM == 'windows':
             # Xbox Game Bar
             def test_xbox():
-                try:
-                    import winreg
-                    key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
-                                       r"Software\\Microsoft\\GameBar")
-                    winreg.CloseKey(key)
-                    return True
-                except:
-                    return False
+                        try:
+                            import winreg
+                            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, 
+                                               r"Software\\Microsoft\\GameBar")
+                            winreg.CloseKey(key)
+                            return True
+                        except:
+                            return False
             verify_service('xbox', test_xbox)
             
             # Windows Cloud Storage
@@ -2541,70 +3737,189 @@ Success Rate: {success_rate:.1f}%
 init_platform_features()
 
 # ------------------- Main Entry -------------------
-def main():
-    global GUI
-    if GUI == 'tkinter' and (IS_DESKTOP or IS_WEB):
-        # Try to set Windows per-monitor DPI awareness before creating the UI
+def init_display_settings():
+    """Initialize display-related settings based on system capabilities."""
+    global SCALE_FACTOR, IS_4K, IS_8K, FPS_TARGET, HDR_ENABLED
+    
+    try:
+        # Detect screen resolution and capabilities
+        if tk._default_root:
+            screen_w = tk._default_root.winfo_screenwidth()
+            screen_h = tk._default_root.winfo_screenheight()
+        else:
+            temp_root = tk.Tk()
+            screen_w = temp_root.winfo_screenwidth()
+            screen_h = temp_root.winfo_screenheight()
+            temp_root.destroy()
+            
+        IS_4K = screen_w >= 3840 or screen_h >= 2160
+        IS_8K = screen_w >= 7680 or screen_h >= 4320
+        
+        # Set scale factor based on resolution
+        if IS_8K:
+            SCALE_FACTOR = 3.0
+            FPS_TARGET = 120
+        elif IS_4K:
+            SCALE_FACTOR = 2.0
+            FPS_TARGET = 60
+        elif screen_w > 1920:
+            SCALE_FACTOR = 1.5
+            FPS_TARGET = 60
+        else:
+            SCALE_FACTOR = 1.0
+            FPS_TARGET = 60
+            
+        # Check HDR support on Windows
         if PLATFORM == 'windows':
             try:
                 import ctypes
-                # Try newer API first (Windows 10+)
+                GetAutoHDRSupport = ctypes.windll.user32.GetAutoHDRSupport
+                HDR_ENABLED = bool(GetAutoHDRSupport())
+            except:
+                HDR_ENABLED = False
+        else:
+            HDR_ENABLED = False
+            
+        logging.info(
+            f"Display Settings: {screen_w}x{screen_h} "
+            f"| Scale: {SCALE_FACTOR:.1f}x "
+            f"| 4K: {IS_4K} "
+            f"| 8K: {IS_8K} "
+            f"| HDR: {HDR_ENABLED} "
+            f"| FPS: {FPS_TARGET}"
+        )
+        
+    except Exception as e:
+        logging.error(f"Display settings initialization failed: {e}")
+        SCALE_FACTOR = 1.0
+        IS_4K = False
+        IS_8K = False
+        HDR_ENABLED = False
+        FPS_TARGET = 60
+
+def main():
+    """Initialize and run the application with appropriate GUI."""
+    global GUI, SCALE_FACTOR, IS_4K, IS_8K, FPS_TARGET, tk, ttk, messagebox
+    
+    # Make sure tkinter modules are available in this scope
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    
+    # Initialize display settings
+    init_display_settings()
+    
+    try:
+        # First, ensure we have a valid GUI framework
+        if not GUI:
+            if IS_DESKTOP or IS_WEB:
                 try:
-                    user32 = ctypes.windll.user32
-                    # -4 = DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-                    user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-                except Exception:
-                    try:
-                        shcore = ctypes.windll.shcore
-                        # PROCESS_PER_MONITOR_DPI_AWARE = 2
-                        shcore.SetProcessDpiAwareness(2)
-                    except Exception:
-                        try:
-                            user32.SetProcessDPIAware()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
-        root = tk.Tk()
-        root.geometry("600x700")
-
-        # Detect screen size and recompute scaling for high-DPI displays
-        try:
-            screen_w = root.winfo_screenwidth()
-            screen_h = root.winfo_screenheight()
-            # determine 4K / 8K
-            is_4k = (screen_w >= 3840 or screen_h >= 2160)
-            is_8k = (screen_w >= 7680)
-            # choose scale factor
-            sf = 2.0 if is_4k else 1.5 if screen_w > 1920 else 1.0
-            # apply to globals
-            globals()['SCALE_FACTOR'] = float(sf)
-            globals()['IS_4K'] = is_4k
-            globals()['IS_8K'] = is_8k
-            globals()['FPS_TARGET'] = 120 if is_8k else 60
-            # HDR/Ray tracing left as defaults (requires platform checks)
-            logging.info(f"Display: {screen_w}x{screen_h} | SCALE_FACTOR={SCALE_FACTOR}")
+                    import tkinter as tk
+                    from tkinter import ttk, messagebox
+                    GUI = 'tkinter'
+                except ImportError as e:
+                    logging.error(f"Failed to import tkinter: {e}")
+            elif IS_MOBILE:
+                try:
+                    from kivy.app import App
+                    GUI = 'kivy'
+                except ImportError as e:
+                    logging.error(f"Failed to import Kivy: {e}")
+        
+        if not GUI:
+            logging.error("No GUI framework available. Please install tkinter for desktop or Kivy for mobile.")
+            return
+        
+        # Desktop/Web application (Tkinter)
+        if GUI == 'tkinter' and (IS_DESKTOP or IS_WEB):
             try:
-                # tell Tk about scaling (affects text and some widgets)
-                root.tk.call('tk', 'scaling', SCALE_FACTOR)
-            except Exception:
-                pass
-        except Exception as e:
-            logging.debug(f"Screen detection failed: {e}")
+                # Windows DPI awareness
+                if PLATFORM == 'windows':
+                    try:
+                        import ctypes
+                        try:
+                            user32 = ctypes.windll.user32
+                            user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+                        except Exception:
+                            try:
+                                shcore = ctypes.windll.shcore
+                                shcore.SetProcessDpiAwareness(2)
+                            except Exception:
+                                try:
+                                    user32.SetProcessDPIAware()
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        logging.warning(f"DPI awareness setup failed: {e}")
 
-        app = MathBlastTk(root)
-        # now that widgets exist, update fonts to respect SCALE_FACTOR
-        try:
-            app.update_fonts()
-        except Exception:
-            pass
+                # Create root window
+                root = tk.Tk()
+                root.title("MathBlast")
+                root.geometry("600x700")
 
-        root.mainloop()
-    elif GUI == 'kivy' and IS_MOBILE:
-        MathBlastKivy().run()
-    else:
-        logging.error("[MathBlast] No GUI available on this platform.")
+                # Screen scaling setup
+                try:
+                    screen_w = root.winfo_screenwidth()
+                    screen_h = root.winfo_screenheight()
+                    is_4k = (screen_w >= 3840 or screen_h >= 2160)
+                    is_8k = (screen_w >= 7680)
+                    sf = 2.0 if is_4k else 1.5 if screen_w > 1920 else 1.0
+                    
+                    globals()['SCALE_FACTOR'] = float(sf)
+                    globals()['IS_4K'] = is_4k
+                    globals()['IS_8K'] = is_8k
+                    globals()['FPS_TARGET'] = 120 if is_8k else 60
+                    
+                    logging.info(f"Display: {screen_w}x{screen_h} | SCALE_FACTOR={SCALE_FACTOR}")
+                    root.tk.call('tk', 'scaling', SCALE_FACTOR)
+                except Exception as e:
+                    logging.warning(f"Screen setup failed: {e}")
+                    globals()['SCALE_FACTOR'] = 1.0
+                    globals()['IS_4K'] = False
+                    globals()['IS_8K'] = False
+                    globals()['FPS_TARGET'] = 60
+
+                # Create and run application
+                app = MathBlastTk(root)
+                try:
+                    app.update_fonts()
+                except Exception as e:
+                    logging.warning(f"Font update failed: {e}")
+
+                root.mainloop()
+                
+            except Exception as e:
+                logging.error(f"Failed to start Tkinter application: {e}")
+                return
+
+        # Mobile application (Kivy)
+        elif GUI == 'kivy' and IS_MOBILE:
+            try:
+                app = MathBlastKivy()
+                app.run()
+            except Exception as e:
+                logging.error(f"Failed to start Kivy application: {e}")
+                return
+                
+        else:
+            logging.error(f"Invalid GUI configuration - GUI: {GUI}, Platform: {PLATFORM}")
+            return
+            
+    except Exception as e:
+        logging.error(f"Application startup failed: {e}")
+        if IS_DESKTOP:
+            try:
+                import tkinter as tk
+                from tkinter import messagebox
+                root = tk.Tk()
+                root.withdraw()
+                messagebox.showerror("Error", f"Failed to start MathBlast:\n{str(e)}")
+            except:
+                print(f"Error: Failed to start MathBlast: {e}")
+        else:
+            print(f"Error: Failed to start MathBlast: {e}")
 
 if __name__ == "__main__":
+    if GAMEPAD_AVAILABLE:
+        threading.Thread(target=listen_for_controller, daemon=True).start()
+
     main()

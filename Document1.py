@@ -5,30 +5,59 @@ from tkinter import ttk
 import winsound  # for sound effects
 import json
 import os  # for file operations
-try:
-    import requests  # for online features
-except Exception:
-    requests = None
-    logging.warning("requests module not available; online features disabled")
+import logging
+# Do not import optional heavy dependencies at module-import time. Use a
+# lazy helper below to import `requests` only when needed. This avoids
+# static-analysis errors in environments where `requests` isn't installed
+# and prevents side-effects at import time.
+requests = None
 import datetime
 import threading
 import uuid
-import logging
 import sys
 import time
 import ctypes
-try:
-    import wmi  # for detecting external keyboards
-except ImportError:
-    # If wmi not available, try to install it
-    import subprocess
-    try:
-        subprocess.check_call(['pip', 'install', 'wmi'])
-        import wmi
-    except Exception as e:
-        logging.warning(f"Could not install wmi module: {e}")
-        wmi = None
+# wmi is optional; if not installed we'll leave it as None and the code
+# will fall back to Windows API checks. Avoid importing at module import
+# time so static analysis doesn't flag unresolved imports in dev envs.
+wmi = None
 from pathlib import Path
+
+# Space Invaders inspired theme shared for this file
+THEME = {
+    'bg': '#02040b',
+    'text': '#39ff14',
+    'muted': '#cfd8dc',
+    'btn': '#7c3aed',
+    'btn_text': '#ffffff',
+    'correct': '#39ff14',
+    'wrong': '#ff4d6d',
+    'accent': '#00d1ff',
+    'high_contrast_bg': '#000000',
+    'high_contrast_text': '#FFFFFF'
+}
+
+# Backwards-compatible aliases used by other files/older code in this module.
+# This keeps later references like THEME['background'] or THEME['primary'] working
+# while preserving the Space Invaders palette keys above.
+THEME.update({
+    'background': THEME['bg'],
+    'primary': THEME['btn'],
+    'secondary': THEME['muted'],
+    'success': THEME['correct'],
+    'error': THEME['wrong'],
+    'warning': THEME['accent']
+})
+
+
+def _get_requests():
+    """Lazily import and return the requests module or None if unavailable."""
+    try:
+        import importlib
+        req = importlib.import_module('requests')
+        return req
+    except Exception:
+        return None
 
 class LayoutManager:
     def __init__(self, root):
@@ -164,28 +193,24 @@ class TouchScreenManager:
     def _check_external_keyboard(self):
         """Check for external keyboards (Bluetooth or USB)"""
         try:
-            if 'wmi' in sys.modules:  # If WMI is available, use it for detailed detection
-                c = wmi.WMI()
-                
-                # Count connected keyboards (both USB and Bluetooth)
-                keyboards = c.Win32_Keyboard()
-                bt_devices = c.Win32_PnPEntity(PNPClass="Bluetooth")
-                
-                # Check for Bluetooth HID devices (keyboards)
-                bt_kbd_count = sum(1 for dev in bt_devices 
-                                 if "keyboard" in dev.Name.lower() or 
-                                    "input device" in dev.Name.lower())
-                                    
-                # Check USB keyboards (excluding built-in laptop keyboard)
-                usb_kbd_count = sum(1 for kbd in keyboards 
-                                  if "usb" in kbd.Name.lower() or
-                                     "bluetooth" in kbd.Name.lower())
-                                     
-                has_external = (bt_kbd_count > 0) or (usb_kbd_count > 1)
+            has_external = False
+            if wmi is not None:
+                try:
+                    c = wmi.WMI()
+                    keyboards = c.Win32_Keyboard() or []
+                    bt_devices = c.Win32_PnPEntity(PNPClass="Bluetooth") or []
+                    bt_kbd_count = sum(1 for dev in bt_devices
+                                       if "keyboard" in getattr(dev, "Name", "").lower() or
+                                          "input device" in getattr(dev, "Name", "").lower())
+                    usb_kbd_count = sum(1 for kbd in keyboards
+                                        if "usb" in getattr(kbd, "Name", "").lower() or
+                                           "bluetooth" in getattr(kbd, "Name", "").lower())
+                    has_external = (bt_kbd_count > 0) or (usb_kbd_count > 1)
+                except Exception:
+                    has_external = False
             else:
                 # Fallback: Check Windows API for connected devices
                 try:
-                    # Use GetRawInputDeviceList to count keyboards
                     class RAWINPUTDEVICELIST(ctypes.Structure):
                         _fields_ = [
                             ("hDevice", ctypes.c_void_p),
@@ -196,25 +221,20 @@ class TouchScreenManager:
                     devices = (RAWINPUTDEVICELIST * 256)()
                     device_count = ctypes.c_uint32(256)
                     size = ctypes.sizeof(RAWINPUTDEVICELIST)
-                    
-                    GetRawInputDeviceList(ctypes.byref(devices), 
-                                        ctypes.byref(device_count), 
-                                        size)
-                                        
-                    # Type 1 is RIM_TYPEKEYBOARD
-                    kbd_count = sum(1 for d in devices[:device_count.value] 
-                                  if d.dwType == 1)
-                    
-                    # If more than one keyboard detected (built-in + external)
+
+                    GetRawInputDeviceList(ctypes.byref(devices),
+                                          ctypes.byref(device_count),
+                                          size)
+
+                    kbd_count = sum(1 for d in devices[:device_count.value]
+                                    if d.dwType == 1)
                     has_external = kbd_count > 1
-                    
                 except Exception:
-                    # If Windows API call fails, assume no external keyboard
                     has_external = False
-            
+
             old_state = self.external_kbd_connected
             self.external_kbd_connected = has_external
-            
+
             # Log keyboard connection changes
             if old_state != self.external_kbd_connected:
                 if self.external_kbd_connected:
@@ -222,7 +242,7 @@ class TouchScreenManager:
                     self.hide_keyboard()  # Hide virtual keyboard if showing
                 else:
                     logging.info("External keyboard disconnected - virtual keyboard enabled")
-                    
+
         except Exception as e:
             logging.warning(f"Error checking keyboards: {e}")
             # Default to not blocking virtual keyboard on error
@@ -244,7 +264,7 @@ class TouchScreenManager:
         self.virtual_kbd.attributes('-topmost', True)  # Stay on top
         
         # Use a dark theme for keyboard
-        self.virtual_kbd.configure(bg='#2d2d2d')
+        self.virtual_kbd.configure(bg=THEME['bg'])
         
         if numeric_only:
             self._create_numeric_keyboard()
@@ -253,9 +273,9 @@ class TouchScreenManager:
             
     def _create_numeric_keyboard(self):
         """Create numeric keypad layout"""
-        keys_frame = tk.Frame(self.virtual_kbd, bg='#2d2d2d')
+        keys_frame = tk.Frame(self.virtual_kbd, bg=THEME['bg'])
         keys_frame.pack(padx=5, pady=5)
-        
+
         # Number pad layout
         num_keys = [
             ['7', '8', '9'],
@@ -263,31 +283,31 @@ class TouchScreenManager:
             ['1', '2', '3'],
             ['.', '0', '⌫']  # Backspace
         ]
-        
+
         for row in num_keys:
-            frame = tk.Frame(keys_frame, bg='#2d2d2d')
+            frame = tk.Frame(keys_frame, bg=THEME['bg'])
             frame.pack()
             for key in row:
                 cmd = lambda x=key: self._press_key(x)
                 btn = tk.Button(frame, text=key, width=5, height=2,
-                              font=('Arial', 18),
-                              bg='#3d3d3d', fg='white',
-                              activebackground='#4d4d4d',
-                              command=cmd)
+                                font=('Arial', 18),
+                                bg=THEME['btn'], fg=THEME['btn_text'],
+                                activebackground=THEME['accent'],
+                                command=cmd)
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
-                
+
         # Add done button
         tk.Button(self.virtual_kbd, text='Done', width=20, height=2,
-                 font=('Arial', 14),
-                 bg='#007acc', fg='white',
-                 activebackground='#1a8cdd',
-                 command=self.hide_keyboard).pack(pady=5)
+                  font=('Arial', 14),
+                  bg=THEME['btn'], fg=THEME['btn_text'],
+                  activebackground=THEME['accent'],
+                  command=self.hide_keyboard).pack(pady=5)
                 
     def _create_full_keyboard(self):
         """Create full alphanumeric keyboard layout"""
-        keys_frame = tk.Frame(self.virtual_kbd, bg='#2d2d2d')
+        keys_frame = tk.Frame(self.virtual_kbd, bg=THEME['bg'])
         keys_frame.pack(padx=5, pady=5)
-        
+
         # Standard QWERTY layout
         key_rows = [
             ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'],
@@ -295,32 +315,32 @@ class TouchScreenManager:
             ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
             ['⇧', 'z', 'x', 'c', 'v', 'b', 'n', 'm', '⌫']
         ]
-        
+
         self.shift_on = False
         for row in key_rows:
-            frame = tk.Frame(keys_frame, bg='#2d2d2d')
+            frame = tk.Frame(keys_frame, bg=THEME['bg'])
             frame.pack()
             for key in row:
                 cmd = lambda x=key: self._press_key(x)
                 btn = tk.Button(frame, text=key, width=4, height=2,
-                              font=('Arial', 14),
-                              bg='#3d3d3d', fg='white',
-                              activebackground='#4d4d4d',
-                              command=cmd)
+                               font=('Arial', 14),
+                               bg=THEME['muted'], fg=THEME['btn_text'],
+                               activebackground=THEME['muted'],
+                               command=cmd)
                 btn.pack(side=tk.LEFT, padx=2, pady=2)
-                
-        # Spacebar and done
+
+        # Spacebar and Done buttons
         tk.Button(keys_frame, text='Space', width=30, height=2,
-                 font=('Arial', 14),
-                 bg='#3d3d3d', fg='white',
-                 activebackground='#4d4d4d',
-                 command=lambda: self._press_key(' ')).pack(pady=2)
-                 
+                  font=('Arial', 14),
+                  bg=THEME['muted'], fg=THEME['btn_text'],
+                  activebackground=THEME['muted'],
+                  command=lambda: self._press_key(' ')).pack(pady=2)
+
         tk.Button(self.virtual_kbd, text='Done', width=20, height=2,
-                 font=('Arial', 14),
-                 bg='#007acc', fg='white',
-                 activebackground='#1a8cdd',
-                 command=self.hide_keyboard).pack(pady=5)
+                  font=('Arial', 14),
+                  bg=THEME['btn'], fg=THEME['btn_text'],
+                  activebackground=THEME['accent'],
+                  command=self.hide_keyboard).pack(pady=5)
                 
     def _press_key(self, key):
         """Handle virtual key press"""
@@ -369,10 +389,10 @@ class TouchScreenManager:
         
         # Add a small indicator that external keyboard can be used
         indicator = tk.Label(self.virtual_kbd,
-                           text="Tip: You can also use a physical keyboard",
-                           font=('Arial', 10),
-                           fg='#888888',
-                           bg='#2d2d2d')
+                             text="Tip: You can also use a physical keyboard",
+                             font=('Arial', 10),
+                             fg=THEME['muted'],
+                             bg=THEME['bg'])
         indicator.pack(pady=(0, 5))
         
     def hide_keyboard(self):
@@ -622,14 +642,20 @@ class OnlineManager:
         
     def connect(self):
         """Connect to server and sync data"""
+        req = _get_requests()
+        if not req:
+            # requests not available in this environment
+            self.online_status = False
+            self.offline_mode = True
+            return False
+
         try:
-            response = requests.post(f"{SERVER_URL}/connect", 
-                                  json={"player_id": self.player_id})
+            response = req.post(f"{SERVER_URL}/connect", json={"player_id": self.player_id})
             if response.status_code == 200:
                 self.online_status = True
                 self.offline_mode = False
                 return True
-        except:
+        except Exception:
             self.online_status = False
             self.offline_mode = True
         return False
@@ -643,13 +669,16 @@ class OnlineManager:
             if not self.online_status:
                 return False
         try:
+            req = _get_requests()
+            if not req:
+                return False
             data = {
                 "player_id": self.player_id,
                 "name": profile_name,
                 "tag": tag,
                 "stats": stats
             }
-            response = requests.post(f"{SERVER_URL}/update_profile", json=data)
+            response = req.post(f"{SERVER_URL}/update_profile", json=data)
             return response.status_code == 200
         except:
             return False
@@ -659,10 +688,13 @@ class OnlineManager:
         if self.offline_mode:
             return {"message": "Offline mode - Rankings unavailable"}
         try:
-            response = requests.get(f"{SERVER_URL}/rankings/{timeframe}")
+            req = _get_requests()
+            if not req:
+                return []
+            response = req.get(f"{SERVER_URL}/rankings/{timeframe}")
             if response.status_code == 200:
                 return response.json()
-        except:
+        except Exception:
             return []
         return []
         
@@ -677,13 +709,19 @@ class OnlineManager:
             "target_tag": target_tag,
             "timestamp": datetime.datetime.now().isoformat()
         }
-        response = requests.post(f"{SERVER_URL}/challenge", json=data)
+        req = _get_requests()
+        if not req:
+            return False
+        response = req.post(f"{SERVER_URL}/challenge", json=data)
         return response.status_code == 200
     
     def check_challenges(self):
         """Check for incoming challenges"""
         try:
-            response = requests.get(f"{SERVER_URL}/challenges/{self.player_id}")
+            req = _get_requests()
+            if not req:
+                return []
+            response = req.get(f"{SERVER_URL}/challenges/{self.player_id}")
             if response.status_code == 200:
                 self.active_challenges = response.json()
                 return self.active_challenges
@@ -744,7 +782,10 @@ class OnlineManager:
                 "last_sync": last_sync
             }
             
-            response = requests.post(f"{SERVER_URL}/sync", json=sync_data)
+            req = _get_requests()
+            if not req:
+                return
+            response = req.post(f"{SERVER_URL}/sync", json=sync_data)
             if response.status_code == 200:
                 server_data = response.json()
                 

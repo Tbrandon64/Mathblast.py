@@ -78,8 +78,17 @@ except:
 
 # ------------------- Constants -------------------
 THEME = {
-    "bg": "#f8f9fa", "text": "#212529", "btn": "#007bff", "btn_text": "white",
-    "correct": "#28a745", "wrong": "#dc3545", "high_contrast_bg": "#000000", "high_contrast_text": "#FFFFFF"
+    # Match the Space Invaders palette used in the Universal client
+    "bg": "#02040b",            # deep space / near-black
+    "text": "#39ff14",          # neon green (classic invader color)
+    "muted": "#cfd8dc",
+    "btn": "#7c3aed",
+    "btn_text": "#ffffff",
+    "correct": "#39ff14",
+    "wrong": "#ff4d6d",
+    "accent": "#00d1ff",
+    "high_contrast_bg": "#000000",
+    "high_contrast_text": "#FFFFFF"
 }
 LANGUAGES = {
     'en': {'name': 'English', 'play': 'Play', 'level': 'Level', 'correct': 'Correct!', 'wrong': 'Wrong!', 'game_over': 'Game Over!'},
@@ -190,7 +199,7 @@ class MathBlastTk:
 
         tk.Label(self.main_frame, text="MathBlast", font=("Arial", 32, "bold"), bg=THEME["bg"]).pack(pady=20)
         tk.Button(self.main_frame, text="Start Game", command=self.start_game, bg=THEME["btn"], fg=THEME["btn_text"], font=("Arial", 14)).pack(pady=10)
-        tk.Button(self.main_frame, text="Voice Mode (Headphones)", command=voice_engine.start, bg="#28a745", fg="white").pack(pady=5)
+        tk.Button(self.main_frame, text="Voice Mode (Headphones)", command=voice_engine.start, bg=THEME.get('correct', '#28a745'), fg=THEME.get('btn_text', 'white')).pack(pady=5)
         tk.Button(self.main_frame, text="Settings", command=self.show_settings).pack(pady=5)
 
     def start_game(self):
